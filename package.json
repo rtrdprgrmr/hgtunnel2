@@ -1,0 +1,29 @@
+{
+  "name": "hgtunnel",
+  "version": "0.1.0",
+  "description": "https(i.e. http-CONNECT) tunnel via http-GET",
+  "homepage": "http://github.com/rdrdprgrmr/hgtunnel",
+  "author": "<rtrdprgrmr@yahoo.co.jp>",
+  "license": "MIT",
+  "keywords": [
+    "OpenShift",
+    "Node.js",
+    "https",
+    "tunnel"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rtrdprgrmr/hgtunnel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rtrdprgrmr/hgtunnel/issues"
+  },
+  "engines": {
+    "node": ">= 0.10.0 < 5.0.0",
+    "npm": ">= 1.0.0"
+  },
+  "main": "server.js",
+  "dependencies": {},
+  "devDependencies": {},
+  "directories": {}
+}
