@@ -31,7 +31,14 @@ if (upper_proxy) {
     var port = obj.port || 80
 }
 
-function http_get(headers, callback) {
+function http_get(headers, callback, bodies) {
+    var l = 0
+    if (bodies) {
+        for (var i = 0; i < bodies.length; i++) {
+            l += bodies[i].length
+        }
+    }
+    headers['Content-Length'] = l
     headers['Connection'] = 'Keep-Alive'
     headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     headers['Pragma'] = 'no-cache'
@@ -45,6 +52,11 @@ function http_get(headers, callback) {
         },
         completion
     )
+    if (bodies) {
+        for (var i = 0; i < bodies.length; i++) {
+            req.write(bodies[i])
+        }
+    }
     req.end()
     req.on('error', function(e) {
         console.error(e)
@@ -113,17 +125,16 @@ function handle_normal(req, res2client) {
     var dn = crypto.randomBytes(32).toString('hex')
     var encrypt = crypto.createCipher('des', up)
     var decrypt = crypto.createDecipher('des', dn)
-    var body = ''
+    var bodies = []
     req.on('data', function(data) {
-        body += encrypt.update(data, 'binary', 'hex')
+        bodies.push(encrypt.update(data))
     })
     req.on('end', function() {
-        body += encrypt.final('hex')
-        console.log("requesting to " + req.url + " with body length=" + body.length)
+        bodies.push(encrypt.final())
+        console.log("requesting to " + req.url)
             //console.log(req.headers)
         http_get({
                 'x-id': sid,
-                'x-body': body,
                 'x-info': info_encrypt({
                     type: 'normal',
                     url: req.url,
@@ -133,7 +144,7 @@ function handle_normal(req, res2client) {
                     dn: dn,
                 })
             },
-            completion)
+            completion, bodies)
     })
     req.on('error', function(e) {
         console.error(e)
@@ -209,11 +220,9 @@ function handle_connect(req, sock, head) {
     function send_up(data) {
         var up = crypto.randomBytes(32).toString('hex')
         var encrypt = crypto.createCipher('des', up)
-        var body = encrypt.update(data, 'binary', 'hex')
-        body += encrypt.final('hex')
+        var bodies = [encrypt.update(data), encrypt.final()]
         http_get({
                 'x-id': sid,
-                'x-body': body,
                 'x-info': info_encrypt({
                     type: 'up',
                     cid: cid,
@@ -226,7 +235,8 @@ function handle_connect(req, sock, head) {
                     return
                 }
                 sock.resume()
-            }
+            },
+            bodies
         )
     }
 

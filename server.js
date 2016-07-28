@@ -97,7 +97,7 @@ function session(key) {
     function handle(req, res) {
         var info = info_decrypt(req.headers['x-info'])
         if (info.type == 'normal') {
-            handle_normal(info, req.headers['x-body'], res)
+            handle_normal(info, req, res)
             return
         }
         if (info.type == 'connect') {
@@ -113,7 +113,7 @@ function session(key) {
             return
         }
         if (info.type == 'up') {
-            handle_up(conn, info, req.headers['x-body'], res)
+            handle_up(conn, info, req, res)
             return
         }
         if (info.type == 'dn') {
@@ -126,10 +126,10 @@ function session(key) {
         }
     }
 
-    function handle_normal(info, body, res2proxy) {
+    function handle_normal(info, req2proxy, res2proxy) {
         var encrypt = crypto.createCipher('des', info.dn)
         var decrypt = crypto.createDecipher('des', info.up)
-        console.log("requesting to " + info.url + " with body length=" + body.length)
+        console.log("requesting to " + info.url)
             //console.log(info.headers)
         var obj = url.parse(info.url)
         var req = http.request({
@@ -140,9 +140,18 @@ function session(key) {
                 headers: info.headers,
             },
             completion)
-        req.write(decrypt.update(body, 'hex'))
-        req.write(decrypt.final())
-        req.end()
+        req2proxy.on('data', function(data) {
+            if (!req.write(decrypt.update(data))) {
+                req2proxy.pause()
+            }
+        })
+        req.on('drain', function() {
+            req2proxy.resume()
+        })
+        req2proxy.on('end', function() {
+            req.write(decrypt.final())
+            req.end()
+        })
         req.on('error', function(e) {
             console.error(e)
             res2proxy.statusCode = 400
@@ -225,14 +234,25 @@ function session(key) {
         }
     }
 
-    function handle_up(conn, info, body, res2proxy) {
+    function handle_up(conn, info, req2proxy, res2proxy) {
         var sock = conn.sock
         var decrypt = crypto.createDecipher('des', info.up)
-        sock.write(decrypt.update(body, 'hex'))
-        sock.write(decrypt.final())
-            //TODO flow control
-        res2proxy.statusCode = 200
-        res2proxy.end()
+        req2proxy.on('data', function(data) {
+            if (!sock.write(decrypt.update(data))) {
+                req2proxy.pause()
+            }
+        })
+        sock.on('drain', drain_listener)
+
+        function drain_listener() {
+            req2proxy.resume()
+        }
+        req2proxy.on('end', function() {
+            sock.removeListener('drain', drain_listener)
+            sock.write(decrypt.final())
+            res2proxy.statusCode = 200
+            res2proxy.end()
+        })
     }
 
     function handle_end(conn, info, res2proxy) {
