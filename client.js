@@ -30,13 +30,16 @@ var server=net.createServer(function(sock){
 
 	var req=http.request({
 			method: 'CONNECT',
+			path: tgt,
 			host: host,
 			port: port,
-			path: tgt,
-			headers: {},
+			headers: {
+				'Connection': 'Keep-Alive',
+				'Content-Length': 0
+			}
 		}
 	)
-	req.end();
+	req.end()
 	req.on('connect', function(res, svrSock){
 		console.log("connected")
 		sock.pipe(svrSock)

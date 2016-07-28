@@ -13,8 +13,8 @@ var crypto=require('crypto')
 var http=require('http')
 var url=require('url')
 
-var local_port=process.argv[2] || 8080
-var remote_url=process.argv[3] || "http://wgtu.herokuapp.com"
+var remote_url=process.argv[2] || "http://wgtu2.herokuapp.com"
+var local_port=process.argv[3] || 8080
 var upper_proxy=process.env.upper_proxy
 
 if(upper_proxy){
@@ -115,13 +115,15 @@ function handle_normal(req, res2client){
 	var decrypt=crypto.createDecipher('des', dn)
 	var body=''
 	req.on('data', function(data){
-		body += encrypt.update(data, 'binary', 'hex');
+		body += encrypt.update(data, 'binary', 'hex')
 	})
 	req.on('end', function(){
-		body += encrypt.final('hex');
-		console.log("requesting to "+req.url)
+		body += encrypt.final('hex')
+		console.log("requesting to "+req.url+" with body length="+body.length)
+		//console.log(req.headers)
 		http_get({
 				'x-id': sid,
+				'x-body': body,
 				'x-info': info_encrypt({
 					type: 'normal',
 					url: req.url,
@@ -129,15 +131,23 @@ function handle_normal(req, res2client){
 					headers: req.headers,
 					up: up,
 					dn: dn,
-				}),
-				'x-body': body
+				})
 			},
 			completion)
 	})
+	req.on('error', function(e){
+		console.error(e)
+		close()
+	})
 	function completion(res){
-		if(res.statusCode!=200) return
+		if(res.statusCode!=200){
+			close()
+			return
+		}
 		var info=info_decrypt(res.headers['x-info'])
 		res2client.writeHead(info.statusCode, info.statusMessage, info.headers)
+		console.log("response from "+req.url+ " status="+info.statusCode)
+		//console.log(info.headers)
 		res.on('data', function(data){
 			if(!res2client.write(decrypt.update(data))){
 				res.pause()
@@ -150,126 +160,129 @@ function handle_normal(req, res2client){
 			res2client.end(decrypt.final())
 		})
 	}
+	function close(){
+		res2client.statusCode=400
+		res2client.end()
+	}
 }
 
 var maxCID=0
 function handle_connect(req, sock, head){
 	var cid=maxCID++
-	var up=crypto.randomBytes(32).toString('hex')
-	var dn=crypto.randomBytes(32).toString('hex')
-	var encrypt=crypto.createCipher('des', up)
-	var decrypt=crypto.createDecipher('des', dn)
 	console.log("connecting to "+req.url)
-	console.log(req.headers)
-	console.log(head)
 	http_get({
 			'x-id': sid,
 			'x-info': info_encrypt({
 				type: 'connect',
 				cid: cid,
 				url: req.url,
-				method: req.method,
-				headers: req.headers,
-				up: up,
-				dn: dn,
-				head: head,
 			})
 		},
 		function(res){
-			if(res.statusCode!=200) return
-			console.log("connected to "+req.url)
+			if(res.statusCode!=200){
+				close()
+				return
+			}
 			sock.write("HTTP/1.1 200 Connection established\r\n\r\n")
 			start()
 		}
 	)
 
 	function start(){
+		if(head && head.length){
+			sock.pause()
+			send_up(head)
+		}
 		sock.on('data', function(data){
 			sock.pause()
-			var body = encrypt.update(data)
-			send_up(body)
+			send_up(data)
 		})
 		sock.on('end', function(){
-			var body = encrypt.final()
-			send_up(body)
+			send_end()
 		})
+		recv_dn()
 	}
 
 	function send_up(data){
-		var body = encrypt.update(data)
+		var up=crypto.randomBytes(32).toString('hex')
+		var encrypt=crypto.createCipher('des', up)
+		var body = encrypt.update(data, 'binary', 'hex')
+		body += encrypt.final('hex')
 		http_get({
 				'x-id': sid,
+				'x-body': body,
 				'x-info': info_encrypt({
-					cid: cid,
 					type: 'up',
+					cid: cid,
+					up: up,
 				})
 			},
 			function(res){
 				if(res.statusCode!=200){
-					console.log("statusCode "+res.statusCode+" on "+tgt)
 					close()
 					return
 				}
-				encrypt.resume()
-			},
-			data
+				sock.resume()
+			}
 		)
 	}
 
-	encrypt.on('end', function(){
+	function send_end(data){
 		http_get({
 				'x-id': sid,
 				'x-info': info_encrypt({
-					cid: cid,
 					type: 'end',
+					cid: cid,
 				})
 			},
 			function(res){
-				console.log("up end "+tgt)
 				if(res.statusCode!=200){
-					console.log("statusCode "+res.statusCode+" on "+tgt)
 					close()
 					return
 				}
 			}
 		)
-	})
+	}
 
 	function recv_dn(){
+		var dn=crypto.randomBytes(32).toString('hex')
+		var decrypt=crypto.createDecipher('des', dn)
 		http_get({
 				'x-id': sid,
 				'x-info': info_encrypt({
-					cid: cid,
 					type: 'dn',
+					cid: cid,
+					dn: dn,
 				})
 			},
 			function(res){
 				if(res.statusCode!=200){
-					console.log("statusCode "+res.statusCode+" on "+tgt)
 					close()
 					return
 				}
-				if(res.headers['x-info']){
-					var info=info_decrypt(res.headers['x-info'])
-					if(info.statusCode) {
-						sock.writeHead(info.statusCode, info.statusMessage, info.headers)
-						//console.log(info.statusCode, info.statusMessage, info.headers)
-					}
+				if(res.headers['x-end']){
+					sock.end()
+					return
 				}
 				res.on('data', function(data){
-					console.log("dn "+data.length+" "+tgt)
-					decrypt.write(data)
-				})
-				res.once('end', function(data){
-					if(info && info.end){
-						console.log("dn end "+tgt)
-						decrypt.end()
-						return
+					if(!sock.write(decrypt.update(data))){
+						res.pause()
 					}
+				})
+				sock.on('drain', drain_listener)
+				function drain_listener(){
+					res.resume()
+				}
+				res.on('end', function(){
+					sock.removeListener('drain', drain_listener)
+					sock.write(decrypt.final())
 					recv_dn()
 				})
 			}
 		)
 	}
 
+	function close(){
+		sock.destroy()
+	}
 }
