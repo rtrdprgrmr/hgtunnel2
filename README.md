@@ -17,7 +17,7 @@ Usage
 
 ```sh
 export upper_proxy="http://proxy-ip:proxy-port"
-node proxy [local_port [remote_url]]
+node proxy [remote_url [local_port]]
 ```
 
 Stupid Example
@@ -25,5 +25,5 @@ Stupid Example
 
 ```sh
 node proxy 8080 &
-curl --proxy http://localhost:8080 https://www.gmail.com
+curl --proxy http://localhost:8080 https://www.google.com
 ```
