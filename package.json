@@ -1,12 +1,11 @@
 {
-  "name": "hgtunnel",
-  "version": "0.1.0",
-  "description": "https(i.e. http-CONNECT) tunnel via http-GET",
+  "name": "hgtunnel2",
+  "version": "0.2.0",
+  "description": "https tunnel(i.e. http-CONNECT) via http-GET",
   "homepage": "http://github.com/rdrdprgrmr/hgtunnel",
   "author": "<rtrdprgrmr@yahoo.co.jp>",
   "license": "MIT",
   "keywords": [
-    "OpenShift",
     "Node.js",
     "https",
     "tunnel"
