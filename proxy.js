@@ -31,7 +31,7 @@ if (upper_proxy) {
     var port = obj.port || 80
 }
 
-function http_get(headers, callback, bodies) {
+function http_get(headers, callback, bodies, id) {
     var l = 0
     if (bodies) {
         for (var i = 0; i < bodies.length; i++) {
@@ -65,8 +65,8 @@ function http_get(headers, callback, bodies) {
 
     function completion(res) {
         if (res.statusCode != 200) {
-            console.error("statusCode " + res.statusCode)
-            if (res.headers['x-info'] === 'session invalid') {
+            console.error("(" + id + ") statusCode " + res.statusCode)
+            if (res.headers['x-info'] == 'session invalid') {
                 console.error("session invalid")
                 process.exit(1)
             }
@@ -111,7 +111,8 @@ http_get({
         secret = rq.computeSecret(res.headers['x-info'], 'hex')
         console.log("new session " + sid)
         init_server()
-    }
+    },
+    null, "init"
 )
 
 function init_server() {
@@ -120,18 +121,21 @@ function init_server() {
     server.listen(local_port)
 }
 
+var maxRID = 0
+
 function handle_normal(req, res2client) {
+    var rid = 'rid' + (maxRID++)
     var up = crypto.randomBytes(32).toString('hex')
     var dn = crypto.randomBytes(32).toString('hex')
-    var encrypt = crypto.createCipher('des', up)
-    var decrypt = crypto.createDecipher('des', dn)
+    var encrypt = crypto.createCipher('des-cbc', up)
+    var decrypt = crypto.createDecipher('des-cbc', dn)
     var bodies = []
     req.on('data', function(data) {
         bodies.push(encrypt.update(data))
     })
     req.on('end', function() {
         bodies.push(encrypt.final())
-        console.log("requesting to " + req.url)
+        console.log("(" + rid + ") requesting to " + req.url)
             //console.log(req.headers)
         http_get({
                 'x-id': sid,
@@ -144,21 +148,22 @@ function handle_normal(req, res2client) {
                     dn: dn,
                 })
             },
-            completion, bodies)
+            completion, bodies, rid)
     })
     req.on('error', function(e) {
+        console.error("(" + rid + ") request error")
         console.error(e)
-        close()
+        close(503)
     })
 
     function completion(res) {
         if (res.statusCode != 200) {
-            close()
+            close(res.statusCode)
             return
         }
         var info = info_decrypt(res.headers['x-info'])
         res2client.writeHead(info.statusCode, info.statusMessage, info.headers)
-        console.log("response from " + req.url + " status=" + info.statusCode)
+        console.log("(" + rid + ") response status=" + info.statusCode)
             //console.log(info.headers)
         res.on('data', function(data) {
             if (!res2client.write(decrypt.update(data))) {
@@ -173,8 +178,8 @@ function handle_normal(req, res2client) {
         })
     }
 
-    function close() {
-        res2client.statusCode = 400
+    function close(statusCode) {
+        res2client.statusCode = statusCode
         res2client.end()
     }
 }
@@ -182,8 +187,8 @@ function handle_normal(req, res2client) {
 var maxCID = 0
 
 function handle_connect(req, sock, head) {
-    var cid = maxCID++
-        console.log("connecting to " + req.url)
+    var cid = 'cid' + (maxCID++)
+    console.log("(" + cid + ") connecting to " + req.url)
     http_get({
             'x-id': sid,
             'x-info': info_encrypt({
@@ -197,9 +202,11 @@ function handle_connect(req, sock, head) {
                 close()
                 return
             }
+            console.log("(" + cid + ") connected")
             sock.write("HTTP/1.1 200 Connection established\r\n\r\n")
             start()
-        }
+        },
+        null, 'connect ' + cid
     )
 
     function start() {
@@ -219,7 +226,7 @@ function handle_connect(req, sock, head) {
 
     function send_up(data) {
         var up = crypto.randomBytes(32).toString('hex')
-        var encrypt = crypto.createCipher('des', up)
+        var encrypt = crypto.createCipher('des-cbc', up)
         var bodies = [encrypt.update(data), encrypt.final()]
         http_get({
                 'x-id': sid,
@@ -236,11 +243,11 @@ function handle_connect(req, sock, head) {
                 }
                 sock.resume()
             },
-            bodies
+            bodies, 'up ' + cid
         )
     }
 
-    function send_end(data) {
+    function send_end() {
         http_get({
                 'x-id': sid,
                 'x-info': info_encrypt({
@@ -253,13 +260,15 @@ function handle_connect(req, sock, head) {
                     close()
                     return
                 }
-            }
+                console.log("(" + cid + ") connection closed")
+            },
+            null, 'end ' + cid
         )
     }
 
     function recv_dn() {
         var dn = crypto.randomBytes(32).toString('hex')
-        var decrypt = crypto.createDecipher('des', dn)
+        var decrypt = crypto.createDecipher('des-cbc', dn)
         http_get({
                 'x-id': sid,
                 'x-info': info_encrypt({
@@ -271,6 +280,10 @@ function handle_connect(req, sock, head) {
             function(res) {
                 if (res.statusCode != 200) {
                     close()
+                    return
+                }
+                if (res.headers['x-end'] == 'poll') {
+                    recv_dn()
                     return
                 }
                 if (res.headers['x-end']) {
@@ -292,7 +305,8 @@ function handle_connect(req, sock, head) {
                     sock.write(decrypt.final())
                     recv_dn()
                 })
-            }
+            },
+            null, 'dn ' + cid
         )
     }
 

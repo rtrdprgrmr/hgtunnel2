@@ -127,9 +127,9 @@ function session(key) {
     }
 
     function handle_normal(info, req2proxy, res2proxy) {
-        var encrypt = crypto.createCipher('des', info.dn)
-        var decrypt = crypto.createDecipher('des', info.up)
-        console.log("requesting to " + info.url)
+        var encrypt = crypto.createCipher('des-cbc', info.dn)
+        var decrypt = crypto.createDecipher('des-cbc', info.up)
+            //console.log("requesting to " + info.url)
             //console.log(info.headers)
         var obj = url.parse(info.url)
         var req = http.request({
@@ -159,9 +159,10 @@ function session(key) {
         })
 
         function completion(res) {
-            console.log("response from " + info.url + " status=" + res.statusCode)
-                //console.log(res.headers)
+            //console.log("response from " + info.url + " status=" + res.statusCode)
+            //console.log(res.headers)
             res2proxy.statusCode = 200
+            res2proxy.setHeader('Connection', 'close')
             res2proxy.setHeader('x-info', info_encrypt({
                 statusCode: res.statusCode,
                 statusMessage: res.statusMessage,
@@ -189,10 +190,14 @@ function session(key) {
         var cid = info.cid
         var conn = {
             cid: cid,
-            url: info.url
+            url: info.url,
         }
         connections[cid] = conn
-        console.log("connecting to " + info.url)
+        conn.close = function() {
+            if (sock) sock.destroy()
+        }
+
+        //console.log("connecting to " + info.url)
         if (upper_proxy) {
             var req = http.request({
                 method: 'CONNECT',
@@ -206,6 +211,7 @@ function session(key) {
             })
             req.end()
             req.on('connect', function(res, sock) {
+                //console.log("connected to " + info.url)
                 conn.sock = sock
                 res2proxy.statusCode = 200
                 res2proxy.end()
@@ -220,6 +226,7 @@ function session(key) {
         } else {
             var obj = url.parse("http://" + info.url)
             var sock = net.connect(obj.port || 80, obj.hostname, function() {
+                //console.log("connected to " + info.url)
                 conn.sock = sock
                 res2proxy.statusCode = 200
                 res2proxy.end()
@@ -236,7 +243,7 @@ function session(key) {
 
     function handle_up(conn, info, req2proxy, res2proxy) {
         var sock = conn.sock
-        var decrypt = crypto.createDecipher('des', info.up)
+        var decrypt = crypto.createDecipher('des-cbc', info.up)
         req2proxy.on('data', function(data) {
             if (!sock.write(decrypt.update(data))) {
                 req2proxy.pause()
@@ -256,6 +263,7 @@ function session(key) {
     }
 
     function handle_end(conn, info, res2proxy) {
+        //console.log("connection closed to " + info.url)
         var sock = conn.sock
         sock.end()
         res2proxy.statusCode = 200
@@ -264,12 +272,14 @@ function session(key) {
 
     function handle_dn(conn, info, res2proxy) {
         var sock = conn.sock
-        var encrypt = crypto.createCipher('des', info.dn)
+        var encrypt = crypto.createCipher('des-cbc', info.dn)
         sock.once('data', data_listener)
         sock.once('end', end_listener)
+        setTimeout(poll_listener, 5000)
         sock.resume()
 
         function data_listener(data) {
+            if (res2proxy.finished) return
             sock.pause()
             sock.removeListener('end', end_listener)
             var body1 = encrypt.update(data)
@@ -282,7 +292,18 @@ function session(key) {
         }
 
         function end_listener() {
+            if (res2proxy.finished) return
             res2proxy.setHeader('x-end', 'true')
+            res2proxy.statusCode = 200
+            res2proxy.end()
+        }
+
+        function poll_listener() {
+            if (res2proxy.finished) return
+            sock.pause()
+            sock.removeListener('data', data_listener)
+            sock.removeListener('end', end_listener)
+            res2proxy.setHeader('x-end', 'poll')
             res2proxy.statusCode = 200
             res2proxy.end()
         }
@@ -292,8 +313,8 @@ function session(key) {
 function patrol() {
     for (sid in sessions) {
         var sess = sessions[sid]
-        sess.idle++
-            if (sess.idle < 10) continue
+        sess.idle++;
+        if (sess.idle < 10) continue
         console.log("expiring session " + sid)
         delete(sessions[sid])
         for (cid in sess.connections) {
